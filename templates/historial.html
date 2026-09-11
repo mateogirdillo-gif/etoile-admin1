@@ -24,6 +24,7 @@
   </div>
   <button class="primary" onclick="cargarHistorial()">Filtrar</button>
   <button class="secondary" onclick="limpiarFiltros()">Limpiar</button>
+  <button class="secondary" onclick="eliminarSeleccionados()" style="background:#ffe2e2;color:#cc0000;border-color:#ffbcbc;">🗑️ Eliminar seleccionados</button>
 </div>
 
 <div class="total-general-bar">
@@ -73,13 +74,17 @@ async function cargarHistorial() {
 
     det.innerHTML = `
       <summary>
-        <div>
-          <strong>${p.pedido_id}</strong> — ${p.cliente || 'Sin nombre'}
-          <div style="color:var(--muted); font-size:12px; margin-top:2px;">${p.fecha || ''} ${p.telefono ? '· ' + p.telefono : ''}</div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <input type="checkbox" class="chk-pedido" value="${p.pedido_id}" onclick="event.stopPropagation()" style="width:18px;height:18px;cursor:pointer;">
+          <div>
+            <strong>${p.pedido_id}</strong> — ${p.cliente || 'Sin nombre'}
+            <div style="color:var(--muted); font-size:12px; margin-top:2px;">${p.fecha || ''} ${p.telefono ? '· ' + p.telefono : ''}</div>
+          </div>
         </div>
         <div style="display:flex; align-items:center; gap:10px;">
           <span class="pill-pago ${pillClase}">${pillTexto}${p.metodo_pago==='transferencia' && p.num_transaccion ? ' · '+p.num_transaccion : ''}</span>
           <strong>$${p.total.toFixed(2)}</strong>
+          <button onclick="event.preventDefault(); eliminarPedido('${p.pedido_id}')" title="Eliminar este pedido" style="background:#ffe2e2;color:#d00;border:1px solid #ffbcbc;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:12px;">🗑️</button>
         </div>
       </summary>
       <div class="pedido-body">
@@ -102,6 +107,39 @@ async function cargarHistorial() {
     `;
     cont.appendChild(det);
   }
+}
+
+async function eliminarPedido(id){
+  if(!confirm(`¿Seguro que quieres eliminar el pedido ${id}? Se borrará del Excel para siempre.`)) return;
+  try {
+    const r = await fetch(`/api/pedido/${id}`, {method: 'DELETE'});
+    const data = await r.json();
+    if(data.ok){
+      showToast('Pedido ' + id + ' eliminado', 'success');
+      cargarHistorial();
+    } else {
+      showToast('Error: ' + data.error, 'error');
+    }
+  } catch(e){
+    showToast('Error de conexión', 'error');
+  }
+}
+
+async function eliminarSeleccionados(){
+  const checks = document.querySelectorAll('.chk-pedido:checked');
+  if(checks.length === 0){ showToast('Marca al menos 1 pedido con el checkbox', 'error'); return; }
+  if(!confirm(`¿Borrar ${checks.length} pedido(s) seleccionado(s)? Esta acción borra del Excel y no se puede deshacer.`)) return;
+  
+  let borrados = 0;
+  for(const chk of checks){
+    try{
+      const r = await fetch(`/api/pedido/${chk.value}`, {method: 'DELETE'});
+      const d = await r.json();
+      if(d.ok) borrados++;
+    } catch(e){}
+  }
+  showToast(`${borrados} pedidos eliminados`, 'success');
+  cargarHistorial();
 }
 
 function limpiarFiltros() {
