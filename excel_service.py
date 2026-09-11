@@ -4,13 +4,10 @@ from pathlib import Path
 import openpyxl
 
 BASE_DIR = Path(__file__).resolve().parent
-BASE_DIR = Path(__file__).resolve().parent
 POSIBLES = [
-    BASE_DIR / "data" / "inventario.xlsx",
     BASE_DIR / "data" / "Sistema_Etoile_2.xlsx",
     BASE_DIR / "data" / "Sistema_Etoile_2.xls",
     BASE_DIR / "Sistema_Etoile_2.xls",
-    BASE_DIR / "Sistema_Etoile_2.xlsx",
 ]
 EXCEL_PATH = next((p for p in POSIBLES if p.exists()), BASE_DIR / "data" / "inventario.xlsx")
 BACKUP_DIR = BASE_DIR / "data" / "backups"
