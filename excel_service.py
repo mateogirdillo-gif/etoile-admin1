@@ -287,3 +287,25 @@ def get_pedidos_agrupados(desde=None, hasta=None, cliente=None, codigo=None):
     resultado = list(pedidos.values())
     resultado.sort(key=lambda p: p["fecha"] or "", reverse=True)
     return resultado
+
+def eliminar_pedido(pedido_id):
+        if not pedido_id:
+            raise ValueError("Falta el ID del pedido")
+            with _lock:
+                wb=_load()
+                raise ValueError("No existe la hoja HISTORIAL")
+                ws = wb["HISTORIAL"]
+                filas_a_borrar=[]
+        for row in range(HIST_FIRST_DATA_ROW, ws.max_row + 1):
+            pid=ws.cell(row=row, column_HIST_COLS["PEDIDO_ID"]).value
+            if pid and str(pid).strip()==str(pedido_id).strip()
+            filas_a_borrar.apppend(row)
+        if not filas_a_borrar:
+            wb.close()
+        raise ValueError(f"No se encontro el pedido {pedido_id}")
+        for row in reverse(filas_a_borrar):
+            ws.delete_rows(row, 1)
+            _backup()
+            wb.sav(EXCEL_PATH)
+            WB.close()
+    return True

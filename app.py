@@ -139,6 +139,18 @@ def api_historial():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
+@app.route("/api/pedido/<pedido_id>", methods=["DELETE"])
+def api_eliminar_pedido(pedido_id):
+    try:
+        xls.eliminar_pedido(pedido_id)
+        return jsonify({"ok":True})
+        except ValueError as e:
+            return jsonify({"ok":False,"error":str(e)}),400
+            except Exception as e:
+                return jsonify({"ok":False,"error":f"Error inesperado;{e}"}),500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
