@@ -1,155 +1,79 @@
-{% extends "base.html" %}
-{% block title %}Historial · Étoile{% endblock %}
-{% block content %}
-{% set active = 'historial' %}
-<h1 class="page-title">Historial de pedidos</h1>
-<p class="page-sub">Todo lo registrado, con método de pago y número de transacción.</p>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Historial - Etoile</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+<div class="container mt-4">
+  <h3 class="mb-3">Historial de Pedidos - Etoile</h3>
+  
+  <div class="row g-2 mb-3">
+    <div class="col-md-3"><input id="f_cliente" class="form-control" placeholder="Buscar cliente"></div>
+    <div class="col-md-3"><input id="f_codigo" class="form-control" placeholder="Buscar código"></div>
+    <div class="col-md-2"><input id="f_desde" type="date" class="form-control"></div>
+    <div class="col-md-2"><input id="f_hasta" type="date" class="form-control"></div>
+    <div class="col-md-2"><button onclick="cargar()" class="btn btn-dark w-100">Buscar</button></div>
+  </div>
 
-<div class="filters-row">
-  <div class="field" style="margin:0;">
-    <label>Desde</label>
-    <input type="date" id="f_desde">
-  </div>
-  <div class="field" style="margin:0;">
-    <label>Hasta</label>
-    <input type="date" id="f_hasta">
-  </div>
-  <div class="field" style="margin:0;">
-    <label>Cliente</label>
-    <input type="text" id="f_cliente" placeholder="Nombre...">
-  </div>
-  <div class="field" style="margin:0;">
-    <label>Código de prenda</label>
-    <input type="text" id="f_codigo" placeholder="Ej: BLAN-NE-S">
-  </div>
-  <button class="primary" onclick="cargarHistorial()">Filtrar</button>
-  <button class="secondary" onclick="limpiarFiltros()">Limpiar</button>
-  <button class="secondary" onclick="eliminarSeleccionados()" style="background:#ffe2e2;color:#cc0000;border-color:#ffbcbc;">🗑️ Eliminar seleccionados</button>
+  <div id="contenedor" class="row"></div>
 </div>
 
-<div class="total-general-bar">
-  <span>Total en el período filtrado</span>
-  <span id="total-general">$0.00</span>
-</div>
-
-<div id="pedidos"></div>
-<div id="vacio" class="empty-state" style="display:none;">No hay pedidos que coincidan con el filtro.</div>
-
-{% endblock %}
-
-{% block extra_scripts %}
 <script>
-async function cargarHistorial() {
-  const params = new URLSearchParams();
-  const desde = document.getElementById('f_desde').value;
-  const hasta = document.getElementById('f_hasta').value;
-  const cliente = document.getElementById('f_cliente').value;
-  const codigo = document.getElementById('f_codigo').value;
-  if (desde) params.set('desde', desde);
-  if (hasta) params.set('hasta', hasta);
-  if (cliente) params.set('cliente', cliente);
-  if (codigo) params.set('codigo', codigo);
-
-  const res = await fetch('/api/historial?' + params.toString());
-  const data = await res.json();
-  const cont = document.getElementById('pedidos');
-  const vacio = document.getElementById('vacio');
-  cont.innerHTML = '';
-
-  if (!data.ok) { showToast('Error: ' + data.error, 'error'); return; }
-
-  document.getElementById('total-general').textContent = '$' + data.total_general.toFixed(2);
-
-  if (data.pedidos.length === 0) {
-    vacio.style.display = 'block';
-    return;
-  }
-  vacio.style.display = 'none';
-
-  for (const p of data.pedidos) {
-    const det = document.createElement('details');
-    det.className = 'pedido-group';
-    const pillClase = (p.metodo_pago === 'efectivo') ? 'efectivo' : 'transferencia';
-    const pillTexto = (p.metodo_pago === 'efectivo') ? 'Efectivo' : 'Transferencia';
-
-    det.innerHTML = `
-      <summary>
-        <div style="display:flex; align-items:center; gap:12px;">
-          <input type="checkbox" class="chk-pedido" value="${p.pedido_id}" onclick="event.stopPropagation()" style="width:18px;height:18px;cursor:pointer;">
-          <div>
-            <strong>${p.pedido_id}</strong> — ${p.cliente || 'Sin nombre'}
-            <div style="color:var(--muted); font-size:12px; margin-top:2px;">${p.fecha || ''} ${p.telefono ? '· ' + p.telefono : ''}</div>
+async function cargar(){
+  const cliente = document.getElementById('f_cliente').value
+  const codigo = document.getElementById('f_codigo').value
+  const desde = document.getElementById('f_desde').value
+  const hasta = document.getElementById('f_hasta').value
+  const url = `/api/pedidos?cliente=${cliente}&codigo=${codigo}&desde=${desde}&hasta=${hasta}`
+  const res = await fetch(url)
+  const data = await res.json()
+  const cont = document.getElementById('contenedor')
+  cont.innerHTML = ''
+  if(!data.length){ cont.innerHTML = '<p class="text-muted">No hay pedidos</p>'; return }
+  data.forEach(p=>{
+    let itemsHtml = p.items.map(i=>`
+      <tr>
+        <td>${i.codigo||''}</td>
+        <td>${i.prenda||''} - ${i.color||''} ${i.talla||''}</td>
+        <td>${i.cant||''}</td>
+        <td>$${i.precio||0}</td>
+        <td>$${i.subtotal||0}</td>
+      </tr>
+    `).join('')
+    cont.innerHTML += `
+      <div class="col-12 mb-3">
+        <div class="card shadow-sm">
+          <div class="card-header d-flex justify-content-between">
+            <b>${p.pedido_id} - ${p.cliente} - ${p.fecha}</b>
+            <span>${p.metodo_pago||''} | ${p.num_transaccion||''} | Tel: ${p.telefono||''}</span>
+          </div>
+          <div class="card-body p-0">
+            <table class="table table-sm mb-0">
+              <thead><tr><th>Código</th><th>Prenda</th><th>Cant</th><th>Precio</th><th>Subtotal</th></tr></thead>
+              <tbody>${itemsHtml}</tbody>
+            </table>
+          </div>
+          <div class="card-footer d-flex justify-content-between">
+            <b>Total: $${p.total.toFixed(2)}</b>
+            <button onclick="eliminar('${p.pedido_id}')" class="btn btn-sm btn-danger">Eliminar pedido</button>
           </div>
         </div>
-        <div style="display:flex; align-items:center; gap:10px;">
-          <span class="pill-pago ${pillClase}">${pillTexto}${p.metodo_pago==='transferencia' && p.num_transaccion ? ' · '+p.num_transaccion : ''}</span>
-          <strong>$${p.total.toFixed(2)}</strong>
-          <button onclick="event.preventDefault(); eliminarPedido('${p.pedido_id}')" title="Eliminar este pedido" style="background:#ffe2e2;color:#d00;border:1px solid #ffbcbc;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:12px;">🗑️</button>
-        </div>
-      </summary>
-      <div class="pedido-body">
-        <table class="data-table">
-          <thead><tr><th>Prenda</th><th>Color</th><th>Talla</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
-          <tbody>
-            ${p.items.map(it => `
-              <tr>
-                <td>${it.prenda}</td>
-                <td>${it.color || '-'}</td>
-                <td>${it.talla || '-'}</td>
-                <td>${it.cant}</td>
-                <td>$${(it.precio||0).toFixed(2)}</td>
-                <td>$${(it.subtotal||0).toFixed(2)}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
       </div>
-    `;
-    cont.appendChild(det);
-  }
+    `
+  })
 }
 
-async function eliminarPedido(id){
-  if(!confirm(`¿Seguro que quieres eliminar el pedido ${id}? Se borrará del Excel para siempre.`)) return;
-  try {
-    const r = await fetch(`/api/pedido/${id}`, {method: 'DELETE'});
-    const data = await r.json();
-    if(data.ok){
-      showToast('Pedido ' + id + ' eliminado', 'success');
-      cargarHistorial();
-    } else {
-      showToast('Error: ' + data.error, 'error');
-    }
-  } catch(e){
-    showToast('Error de conexión', 'error');
-  }
+async function eliminar(id){
+  if(!confirm('¿Eliminar '+id+'?')) return
+  const res = await fetch(`/api/pedidos/${id}`, {method:'DELETE'})
+  const j = await res.json()
+  if(j.ok){ alert('Eliminado'); cargar() } else { alert(j.error) }
 }
 
-async function eliminarSeleccionados(){
-  const checks = document.querySelectorAll('.chk-pedido:checked');
-  if(checks.length === 0){ showToast('Marca al menos 1 pedido con el checkbox', 'error'); return; }
-  if(!confirm(`¿Borrar ${checks.length} pedido(s) seleccionado(s)? Esta acción borra del Excel y no se puede deshacer.`)) return;
-  
-  let borrados = 0;
-  for(const chk of checks){
-    try{
-      const r = await fetch(`/api/pedido/${chk.value}`, {method: 'DELETE'});
-      const d = await r.json();
-      if(d.ok) borrados++;
-    } catch(e){}
-  }
-  showToast(`${borrados} pedidos eliminados`, 'success');
-  cargarHistorial();
-}
-
-function limpiarFiltros() {
-  document.getElementById('f_desde').value = '';
-  document.getElementById('f_hasta').value = '';
-  document.getElementById('f_cliente').value = '';
-  document.getElementById('f_codigo').value = '';
-  cargarHistorial();
-}
-
-cargarHistorial();
+cargar()
 </script>
-{% endblock %}
+</body>
+</html>
