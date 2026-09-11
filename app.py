@@ -1,21 +1,29 @@
 import os
-import os
 from flask import Flask, render_template, request, jsonify
+
 import excel_service as xls
 
 app = Flask(__name__)
+
+
+# ---------------------------------------------------------------- páginas ----
 
 @app.route("/")
 def catalogo():
     return render_template("catalogo.html")
 
+
 @app.route("/pedido")
 def nuevo_pedido():
     return render_template("nuevo_pedido.html")
 
+
 @app.route("/historial")
 def historial():
     return render_template("historial.html")
+
+
+# ------------------------------------------------------------------- API ----
 
 @app.route("/api/prendas")
 def api_prendas():
@@ -26,13 +34,16 @@ def api_prendas():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
 @app.route("/api/inventario")
 def api_inventario():
+    """Lista plana de variantes (para el buscador de agregar al pedido)."""
     try:
         data = xls.get_inventario_con_disponible()
         return jsonify({"ok": True, "items": data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route("/api/stock", methods=["POST"])
 def api_actualizar_stock():
@@ -40,12 +51,13 @@ def api_actualizar_stock():
     codigo = body.get("codigo")
     stock = body.get("stock")
     if codigo is None or stock is None:
-        return jsonify({"ok": False, "error": "Faltan datos"}), 400
+        return jsonify({"ok": False, "error": "Faltan datos (codigo, stock)"}), 400
     try:
         xls.actualizar_stock(codigo, int(stock))
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
 
 @app.route("/api/prendas_nombres")
 def api_prendas_nombres():
@@ -53,6 +65,7 @@ def api_prendas_nombres():
         return jsonify({"ok": True, "nombres": xls.get_prendas_nombres()})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route("/api/sugerir_codigo")
 def api_sugerir_codigo():
@@ -64,6 +77,7 @@ def api_sugerir_codigo():
         return jsonify({"ok": True, "codigo": codigo})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route("/api/prenda", methods=["POST"])
 def api_agregar_prenda():
@@ -80,7 +94,8 @@ def api_agregar_prenda():
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": f"Error inesperado: {e}"}), 500
+
 
 @app.route("/api/pedido", methods=["POST"])
 def api_crear_pedido():
@@ -90,10 +105,12 @@ def api_crear_pedido():
     items = body.get("items") or []
     metodo_pago = body.get("metodo_pago")
     num_transaccion = (body.get("num_transaccion") or "").strip() or None
+
     if not cliente:
-        return jsonify({"ok": False, "error": "Falta cliente"}), 400
+        return jsonify({"ok": False, "error": "Falta el nombre del cliente"}), 400
     if not items:
-        return jsonify({"ok": False, "error": "Sin prendas"}), 400
+        return jsonify({"ok": False, "error": "El pedido no tiene prendas"}), 400
+
     try:
         pedido_id = xls.crear_pedido(
             cliente=cliente,
@@ -106,7 +123,8 @@ def api_crear_pedido():
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": f"Error inesperado: {e}"}), 500
+
 
 @app.route("/api/historial")
 def api_historial():
