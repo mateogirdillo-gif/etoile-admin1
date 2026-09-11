@@ -297,7 +297,7 @@ def eliminar_pedido(pedido_id):
                 ws = wb["HISTORIAL"]
                 filas_a_borrar=[]
         for row in range(HIST_FIRST_DATA_ROW, ws.max_row + 1):
-            pid=ws.cell(row=row, column_HIST_COLS["PEDIDO_ID"]).value
+            pid=ws.cell(row=row, column=HIST_COLS["PEDIDO_ID"]).value
             if pid and str(pid).strip()==str(pedido_id).strip()
             filas_a_borrar.apppend(row)
         if not filas_a_borrar:
