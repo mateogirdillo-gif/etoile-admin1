@@ -6,14 +6,13 @@ import openpyxl
 BASE_DIR = Path(__file__).resolve().parent
 # busca tu archivo con cualquier nombre
 POSIBLES = [
-    BASE_DIR / "data" / "inventario.xlsx",
     BASE_DIR / "data" / "Sistema_Etoile_2.xlsx",
     BASE_DIR / "data" / "Sistema_Etoile_2.xls",
     BASE_DIR / "Sistema_Etoile_2.xlsx",
 ]
-EXCEL_PATH = next((p for p in POSIBLES if p.exists()), BASE_DIR / "data" / "inventario.xlsx")
+EXCEL_PATH = next((p for p in POSIBLES if p.exists()), BASE_DIR / "data" / "Sistema_Etoile_2.xlsx")
 
-INV_COLS = {"CODIGO":1,"PRENDA":2,"COLOR":3,"TALLA":4,"PRECIO":5,"STOCK":6}
+INV_COLS = {"CODIGO":1,"PRENDA":2,"COLOR":3,"TALLA":4,"PRECIO":5}
 HIST_COLS = {"PEDIDO_ID":1,"FECHA":2,"CLIENTE":3,"TELEFONO":4,"CODIGO":5,"PRENDA":6,"COLOR":7,"TALLA":8,"CANT":9,"PRECIO":10,"SUBTOTAL":11,"METODO_PAGO":12,"NUM_TRANSACCION":13}
 _lock = threading.Lock()
 
