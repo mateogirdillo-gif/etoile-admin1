@@ -1,311 +1,269 @@
-import os
-import shutil
-import threading
-from datetime import datetime
-import re
+import os, re, shutil, threading
+from datetime import datetime, date
+from pathlib import Path
 import openpyxl
-from openpyxl.utils import column_index_from_string
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-EXCEL_PATH = os.environ.get(
-    "ETOILE_EXCEL_PATH", os.path.join(BASE_DIR, "data", "Sistema_Etoile_2.xlsx")
-)
-BACKUP_DIR = os.path.join(BASE_DIR, "data", "backups")
+BASE_DIR = Path(__file__).resolve().parent
+EXCEL_PATH = BASE_DIR / "data" / "inventario.xlsx"
+BACKUP_DIR = BASE_DIR / "data" / "backups"
+
+INV_COLS = {"CODIGO":1,"PRENDA":2,"COLOR":3,"TALLA":4,"PRECIO":5,"STOCK":6,"RESERVADO":7,"DISPONIBLE":8}
+HIST_COLS = {"PEDIDO_ID":1,"FECHA":2,"CLIENTE":3,"TELEFONO":4,"CODIGO":5,"PRENDA":6,"COLOR":7,"TALLA":8,"CANT":9,"PRECIO":10,"SUBTOTAL":11,"METODO_PAGO":12,"NUM_TRANSACCION":13}
+
+INV_FIRST_DATA_ROW = 2
+HIST_FIRST_DATA_ROW = 2
+
 _lock = threading.Lock()
 
-INV_HEADER_ROW = 3
-INV_FIRST_DATA_ROW = 4
-INV_COLS = {"CODIGO": 1, "PRENDA": 2, "COLOR": 3, "TALLA": 4, "PRECIO": 5}
-
-HIST_HEADER_ROW = 4
-HIST_FIRST_DATA_ROW = 5
-HIST_LAST_DATA_ROW = 5000 # <-- Aumentado para que no se llene nunca
-HIST_COLS = {
-    "FECHA": 1, "CODIGO": 2, "PRENDA": 3, "COLOR": 4, "TALLA": 5,
-    "CANT": 6, "PRECIO": 7, "SUBTOTAL": 8, "CLIENTE": 9,
-    "PEDIDO_ID": 10, "TELEFONO": 11, "METODO_PAGO": 12, "NUM_TRANSACCION": 13,
-}
-
-_REF_SIMPLE = re.compile(r"^=([A-Z]+)(\d+)$")
-
-def _ensure_excel_exists():
-    os.makedirs(os.path.dirname(EXCEL_PATH), exist_ok=True)
-    if not os.path.exists(EXCEL_PATH):
-        wb = openpyxl.Workbook()
-        ws1 = wb.active
-        ws1.title = "INVENTARIO"
-        ws1.cell(row=3, column=1, value="CODIGO")
-        ws1.cell(row=3, column=2, value="PRENDA")
-        ws1.cell(row=3, column=3, value="COLOR")
-        ws1.cell(row=3, column=4, value="TALLA")
-        ws1.cell(row=3, column=5, value="PRECIO")
-        ws2 = wb.create_sheet("HISTORIAL")
-        headers = ["FECHA","CODIGO","PRENDA","COLOR","TALLA","CANT","PRECIO","SUBTOTAL","CLIENTE","PEDIDO_ID","TELEFONO","METODO_PAGO","NUM_TRANSACCION"]
-        for i, h in enumerate(headers, 1):
-            ws2.cell(row=4, column=i, value=h)
-        wb.save(EXCEL_PATH)
-        wb.close()
+def _load():
+    if not EXCEL_PATH.exists():
+        raise FileNotFoundError(f"No se encontró {EXCEL_PATH}")
+    return openpyxl.load_workbook(EXCEL_PATH)
 
 def _backup():
-    # en Render no hacemos backup si no hay disco, para no llenarlo
-    if os.environ.get("RENDER"): return
-    os.makedirs(BACKUP_DIR, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest = os.path.join(BACKUP_DIR, f"Sistema_Etoile_2_{stamp}.xlsx")
     try:
-        shutil.copy2(EXCEL_PATH, dest)
-    except: pass
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        shutil.copy(EXCEL_PATH, BACKUP_DIR / f"inventario_{ts}.xlsx")
+    except Exception:
+        pass
 
-def _load(data_only=False):
-    _ensure_excel_exists()
-    return openpyxl.load_workbook(EXCEL_PATH, data_only=data_only)
+def _parse_date(v):
+    if not v: return None
+    if isinstance(v, (datetime, date)):
+        return v.date() if isinstance(v, datetime) else v
+    s = str(v).strip()
+    for fmt in ("%Y-%m-%d","%d/%m/%Y","%m/%d/%Y","%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except: pass
+    return None
 
-def _resolver_celda(ws, row, col, visitados=None):
-    if visitados is None: visitados = set()
-    val = ws.cell(row=row, column=col).value
-    if not (isinstance(val, str) and val.startswith("=")): return val
-    m = _REF_SIMPLE.match(val)
-    if not m: return None
-    ref_col = column_index_from_string(m.group(1))
-    ref_row = int(m.group(2))
-    if (ref_row, ref_col) in visitados: return None
-    visitados.add((ref_row, ref_col))
-    return _resolver_celda(ws, ref_row, ref_col, visitados)
+def _norm(s):
+    return re.sub(r"\s+"," ", str(s or "").strip()).lower()
 
-def get_inventario_raw(wb=None):
-    own = wb is None
-    wb = wb or _load(data_only=True)
-    if "INVENTARIO" not in wb.sheetnames:
-        if own: wb.close()
-        return []
-    ws = wb["INVENTARIO"]
-    items = []
-    for row in range(INV_FIRST_DATA_ROW, ws.max_row + 1):
-        codigo = ws.cell(row=row, column=INV_COLS["CODIGO"]).value
-        if not codigo: continue
-        items.append({
-            "codigo": str(codigo).strip(),
-            "prenda": _resolver_celda(ws, row, INV_COLS["PRENDA"]),
-            "color": _resolver_celda(ws, row, INV_COLS["COLOR"]),
-            "talla": _resolver_celda(ws, row, INV_COLS["TALLA"]),
-            "precio": ws.cell(row=row, column=INV_COLS["PRECIO"]).value or 0,
-            "_row": row,
-        })
-    if own: wb.close()
-    return items
-
-def get_historial_raw(wb=None):
-    own = wb is None
-    wb = wb or _load(data_only=True)
-    if "HISTORIAL" not in wb.sheetnames:
-        if own: wb.close()
-        return []
-    ws = wb["HISTORIAL"]
-    items = []
-    for row in range(HIST_FIRST_DATA_ROW, ws.max_row + 1):
-        codigo = ws.cell(row=row, column=HIST_COLS["CODIGO"]).value
-        if not codigo: continue
-        if isinstance(codigo, str) and codigo.startswith("="): continue
-        items.append({
-            "fecha": ws.cell(row=row, column=HIST_COLS["FECHA"]).value,
-            "codigo": str(codigo).strip(),
-            "prenda": ws.cell(row=row, column=HIST_COLS["PRENDA"]).value,
-            "color": ws.cell(row=row, column=HIST_COLS["COLOR"]).value,
-            "talla": ws.cell(row=row, column=HIST_COLS["TALLA"]).value,
-            "cant": ws.cell(row=row, column=HIST_COLS["CANT"]).value or 0,
-            "precio": ws.cell(row=row, column=HIST_COLS["PRECIO"]).value or 0,
-            "subtotal": ws.cell(row=row, column=HIST_COLS["SUBTOTAL"]).value or 0,
-            "cliente": ws.cell(row=row, column=HIST_COLS["CLIENTE"]).value,
-            "pedido_id": ws.cell(row=row, column=HIST_COLS["PEDIDO_ID"]).value,
-            "telefono": ws.cell(row=row, column=HIST_COLS["TELEFONO"]).value,
-            "metodo_pago": ws.cell(row=row, column=HIST_COLS["METODO_PAGO"]).value,
-            "num_transaccion": ws.cell(row=row, column=HIST_COLS["NUM_TRANSACCION"]).value,
-        })
-    if own: wb.close()
-    return items
-
-# --- FUNCIONES QUE FALTABAN PARA QUE NO CRASHEE EN LA NUBE ---
-def actualizar_stock(codigo, stock):
-    # Ya no usas stock, pero tu API lo sigue llamando. Lo dejamos como no-op para que no crashee
-    return True
-
-def get_inventario_con_disponible():
-    with _lock:
-        wb = _load(data_only=True)
-        inventario = get_inventario_raw(wb)
-        historial = get_historial_raw(wb)
-        wb.close()
-    vendido_por_codigo = {}
-    for h in historial:
-        vendido_por_codigo[h["codigo"]] = vendido_por_codigo.get(h["codigo"], 0) + (h["cant"] or 0)
-    for item in inventario:
-        item["vendido"] = vendido_por_codigo.get(item["codigo"], 0)
-    return inventario
-
-def get_prendas_agrupadas(busqueda=None):
-    inventario = get_inventario_con_disponible()
-    if busqueda:
-        b = busqueda.strip().lower()
-        inventario = [i for i in inventario if b in (i["prenda"] or "").lower()]
-    agrupado = {}
-    for item in inventario:
-        nombre = item["prenda"] or "(sin nombre)"
-        agrupado.setdefault(nombre, []).append(item)
-    resultado = []
-    for nombre, variantes in sorted(agrupado.items()):
-        colores = sorted(set(v["color"] for v in variantes if v["color"]))
-        tallas = sorted(set(v["talla"] for v in variantes if v["talla"]))
-        precio = variantes[0]["precio"] if variantes else 0
-        resultado.append({"prenda": nombre, "colores": colores, "tallas": tallas, "precio": precio, "variantes": variantes})
-    return resultado
-
-def _abreviar(texto, largo):
-    limpio = "".join(ch for ch in (texto or "") if ch.isalnum())
-    return limpio[:largo].upper() if limpio else "XX"
-
-def sugerir_codigo(prenda, color, talla, wb=None):
-    palabras = [p for p in (prenda or "").split() if p]
-    if len(palabras) >= 2: prendaAbrev = _abreviar(palabras[0], 2) + _abreviar(palabras[1], 2)
-    elif len(palabras) == 1: prendaAbrev = _abreviar(palabras[0], 4)
-    else: prendaAbrev = "XXXX"
-    colorAbrev = _abreviar(color, 2)
-    tallaTxt = "".join(ch for ch in (talla or "").strip().upper() if ch.isalnum()) or "XX"
-    base = f"{prendaAbrev}-{colorAbrev}-{tallaTxt}"
-    own = wb is None
-    wb = wb or _load()
-    inventario = get_inventario_raw(wb)
-    if own: wb.close()
-    existentes = {i["codigo"] for i in inventario}
-    if base not in existentes: return base
-    n = 2
-    while f"{base}-{n}" in existentes: n += 1
-    return f"{base}-{n}"
-
-def get_prendas_nombres():
-    inventario = get_inventario_raw()
-    return sorted(set(i["prenda"] for i in inventario if i["prenda"] and not str(i["prenda"]).startswith("=")))
-
-def agregar_prenda(prenda, color, talla, precio, codigo=None):
-    prenda = (prenda or "").strip()
-    color = (color or "").strip()
-    talla = (talla or "").strip()
-    if not prenda: raise ValueError("Falta el nombre de la prenda")
-    if precio is None or float(precio) < 0: raise ValueError("Precio inválido")
+def get_prendas_agrupadas(q=None):
     with _lock:
         wb = _load()
         ws = wb["INVENTARIO"]
-        inventario = get_inventario_raw(wb)
-        existentes = {i["codigo"] for i in inventario}
-        if codigo:
-            codigo = codigo.strip().upper()
-            if codigo in existentes:
-                wb.close()
-                raise ValueError(f"El código {codigo} ya existe.")
-        else:
-            codigo = sugerir_codigo(prenda, color, talla, wb)
-        fila = INV_FIRST_DATA_ROW
-        for row in range(INV_FIRST_DATA_ROW, ws.max_row + 2):
-            if not ws.cell(row=row, column=INV_COLS["CODIGO"]).value:
-                fila = row
-                break
-        else: fila = ws.max_row + 1
-        ws.cell(row=fila, column=INV_COLS["CODIGO"], value=codigo)
-        ws.cell(row=fila, column=INV_COLS["PRENDA"], value=prenda)
-        ws.cell(row=fila, column=INV_COLS["COLOR"], value=color)
-        ws.cell(row=fila, column=INV_COLS["TALLA"], value=talla)
-        ws.cell(row=fila, column=INV_COLS["PRECIO"], value=float(precio))
-        _backup()
-        wb.save(EXCEL_PATH)
+        grupos = {}
+        for r in range(INV_FIRST_DATA_ROW, ws.max_row+1):
+            prenda = ws.cell(r, INV_COLS["PRENDA"]).value
+            if not prenda: continue
+            if q and q.lower() not in str(prenda).lower():
+                # busca también en color/codigo
+                color = str(ws.cell(r, INV_COLS["COLOR"]).value or "")
+                codigo = str(ws.cell(r, INV_COLS["CODIGO"]).value or "")
+                if q.lower() not in color.lower() and q.lower() not in codigo.lower():
+                    continue
+            key = str(prenda).strip()
+            if key not in grupos:
+                grupos[key] = {"prenda": key, "variantes": []}
+            grupos[key]["variantes"].append({
+                "codigo": ws.cell(r, INV_COLS["CODIGO"]).value,
+                "color": ws.cell(r, INV_COLS["COLOR"]).value,
+                "talla": ws.cell(r, INV_COLS["TALLA"]).value,
+                "precio": ws.cell(r, INV_COLS["PRECIO"]).value or 0,
+                "stock": ws.cell(r, INV_COLS["STOCK"]).value or 0,
+                "disponible": ws.cell(r, INV_COLS["DISPONIBLE"]).value or 0,
+            })
         wb.close()
-    return codigo
+        return list(grupos.values())
 
-def siguiente_pedido_id(wb):
-    ws = wb["HISTORIAL"]
-    max_id = 0
-    for row in range(HIST_FIRST_DATA_ROW, ws.max_row + 1):
-        pid = ws.cell(row=row, column=HIST_COLS["PEDIDO_ID"]).value
-        if pid:
-            try:
-                num = int(str(pid).replace("PED-", ""))
-                max_id = max(max_id, num)
-            except: continue
-    return f"PED-{max_id + 1:04d}"
-
-def crear_pedido(cliente, telefono, items, metodo_pago, num_transaccion):
-    if not items: raise ValueError("El pedido no tiene prendas")
-    if metodo_pago not in ("efectivo", "transferencia"): raise ValueError("Método de pago inválido")
-    if metodo_pago == "transferencia" and not num_transaccion: raise ValueError("Falta el número de transacción")
+def get_inventario_con_disponible():
     with _lock:
         wb = _load()
-        ws_hist = wb["HISTORIAL"]
-        pedido_id = siguiente_pedido_id(wb)
-        fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
-        fila = None
-        for row in range(HIST_FIRST_DATA_ROW, ws_hist.max_row + 2):
-            valor = ws_hist.cell(row=row, column=HIST_COLS["CODIGO"]).value
-            if not valor:
-                fila = row
-                break
-        if fila is None: fila = ws_hist.max_row + 1
-        for it in items:
-            subtotal = round(it["precio"] * it["cantidad"], 2)
-            ws_hist.cell(row=fila, column=HIST_COLS["FECHA"], value=fecha)
-            ws_hist.cell(row=fila, column=HIST_COLS["CODIGO"], value=it["codigo"])
-            ws_hist.cell(row=fila, column=HIST_COLS["PRENDA"], value=it.get("prenda"))
-            ws_hist.cell(row=fila, column=HIST_COLS["COLOR"], value=it.get("color"))
-            ws_hist.cell(row=fila, column=HIST_COLS["TALLA"], value=it.get("talla"))
-            ws_hist.cell(row=fila, column=HIST_COLS["CANT"], value=it["cantidad"])
-            ws_hist.cell(row=fila, column=HIST_COLS["PRECIO"], value=it["precio"])
-            ws_hist.cell(row=fila, column=HIST_COLS["SUBTOTAL"], value=subtotal)
-            ws_hist.cell(row=fila, column=HIST_COLS["CLIENTE"], value=cliente)
-            ws_hist.cell(row=fila, column=HIST_COLS["PEDIDO_ID"], value=pedido_id)
-            ws_hist.cell(row=fila, column=HIST_COLS["TELEFONO"], value=telefono)
-            ws_hist.cell(row=fila, column=HIST_COLS["METODO_PAGO"], value=metodo_pago)
-            ws_hist.cell(row=fila, column=HIST_COLS["NUM_TRANSACCION"], value=num_transaccion if metodo_pago == "transferencia" else "EFECTIVO")
-            fila += 1
+        ws = wb["INVENTARIO"]
+        out=[]
+        for r in range(INV_FIRST_DATA_ROW, ws.max_row+1):
+            codigo = ws.cell(r, INV_COLS["CODIGO"]).value
+            if not codigo: continue
+            out.append({
+                "codigo": codigo,
+                "prenda": ws.cell(r, INV_COLS["PRENDA"]).value,
+                "color": ws.cell(r, INV_COLS["COLOR"]).value,
+                "talla": ws.cell(r, INV_COLS["TALLA"]).value,
+                "precio": ws.cell(r, INV_COLS["PRECIO"]).value or 0,
+                "stock": ws.cell(r, INV_COLS["STOCK"]).value or 0,
+                "disponible": ws.cell(r, INV_COLS["DISPONIBLE"]).value or 0,
+            })
+        wb.close()
+        return out
+
+def actualizar_stock(codigo, nuevo_stock):
+    with _lock:
+        wb = _load()
+        ws = wb["INVENTARIO"]
+        for r in range(INV_FIRST_DATA_ROW, ws.max_row+1):
+            if str(ws.cell(r, INV_COLS["CODIGO"]).value).strip() == str(codigo).strip():
+                ws.cell(r, INV_COLS["STOCK"]).value = int(nuevo_stock)
+                _backup()
+                wb.save(EXCEL_PATH)
+                wb.close()
+                return True
+        wb.close()
+        raise ValueError("Código no encontrado")
+
+def get_prendas_nombres():
+    with _lock:
+        wb = _load()
+        ws = wb["INVENTARIO"]
+        nombres=set()
+        for r in range(INV_FIRST_DATA_ROW, ws.max_row+1):
+            v=ws.cell(r, INV_COLS["PRENDA"]).value
+            if v: nombres.add(str(v).strip())
+        wb.close()
+        return sorted(nombres)
+
+def sugerir_codigo(prenda, color, talla):
+    p = (prenda[:4].upper() if prenda else "PREN")
+    c = (color[:2].upper() if color else "XX")
+    t = (str(talla).upper() if talla else "U")
+    return f"{p}-{c}-{t}"
+
+def agregar_prenda(prenda, color, talla, precio, codigo=None):
+    if not prenda or not precio:
+        raise ValueError("Falta prenda o precio")
+    with _lock:
+        wb = _load()
+        ws = wb["INVENTARIO"]
+        if not codigo:
+            codigo = sugerir_codigo(prenda,color,talla)
+        # verificar duplicado
+        for r in range(INV_FIRST_DATA_ROW, ws.max_row+1):
+            if str(ws.cell(r, INV_COLS["CODIGO"]).value).strip() == codigo.strip():
+                wb.close()
+                raise ValueError(f"El código {codigo} ya existe")
+        nr = ws.max_row+1
+        ws.cell(nr, INV_COLS["CODIGO"]).value = codigo
+        ws.cell(nr, INV_COLS["PRENDA"]).value = prenda
+        ws.cell(nr, INV_COLS["COLOR"]).value = color
+        ws.cell(nr, INV_COLS["TALLA"]).value = talla
+        ws.cell(nr, INV_COLS["PRECIO"]).value = float(precio)
+        ws.cell(nr, INV_COLS["STOCK"]).value = 0
+        ws.cell(nr, INV_COLS["RESERVADO"]).value = 0
+        ws.cell(nr, INV_COLS["DISPONIBLE"]).value = 0
         _backup()
         wb.save(EXCEL_PATH)
         wb.close()
-    return pedido_id
+        return codigo
+
+def _siguiente_pedido_id(ws):
+    max_n=0
+    for r in range(HIST_FIRST_DATA_ROW, ws.max_row+1):
+        pid = ws.cell(r, HIST_COLS["PEDIDO_ID"]).value
+        if pid:
+            m=re.search(r"(\d+)", str(pid))
+            if m:
+                max_n=max(max_n, int(m.group(1)))
+    return f"PED-{max_n+1:04d}"
+
+def crear_pedido(cliente, telefono, items, metodo_pago, num_transaccion):
+    with _lock:
+        wb = _load()
+        ws_inv = wb["INVENTARIO"]
+        ws_hist = wb["HISTORIAL"] if "HISTORIAL" in wb.sheetnames else wb.create_sheet("HISTORIAL")
+        pedido_id = _siguiente_pedido_id(ws_hist)
+        fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
+        for it in items:
+            codigo = it.get("codigo")
+            cant = int(it.get("cant",1))
+            # buscar precio en inventario
+            precio=0
+            prenda=color=talla=""
+            for r in range(INV_FIRST_DATA_ROW, ws_inv.max_row+1):
+                if str(ws_inv.cell(r, INV_COLS["CODIGO"]).value).strip() == str(codigo).strip():
+                    prenda = ws_inv.cell(r, INV_COLS["PRENDA"]).value
+                    color = ws_inv.cell(r, INV_COLS["COLOR"]).value
+                    talla = ws_inv.cell(r, INV_COLS["TALLA"]).value
+                    precio = ws_inv.cell(r, INV_COLS["PRECIO"]).value or 0
+                    break
+            subtotal = float(precio)*cant
+            nr = ws_hist.max_row+1
+            ws_hist.cell(nr, HIST_COLS["PEDIDO_ID"]).value = pedido_id
+            ws_hist.cell(nr, HIST_COLS["FECHA"]).value = fecha
+            ws_hist.cell(nr, HIST_COLS["CLIENTE"]).value = cliente
+            ws_hist.cell(nr, HIST_COLS["TELEFONO"]).value = telefono
+            ws_hist.cell(nr, HIST_COLS["CODIGO"]).value = codigo
+            ws_hist.cell(nr, HIST_COLS["PRENDA"]).value = prenda
+            ws_hist.cell(nr, HIST_COLS["COLOR"]).value = color
+            ws_hist.cell(nr, HIST_COLS["TALLA"]).value = talla
+            ws_hist.cell(nr, HIST_COLS["CANT"]).value = cant
+            ws_hist.cell(nr, HIST_COLS["PRECIO"]).value = precio
+            ws_hist.cell(nr, HIST_COLS["SUBTOTAL"]).value = subtotal
+            ws_hist.cell(nr, HIST_COLS["METODO_PAGO"]).value = metodo_pago
+            ws_hist.cell(nr, HIST_COLS["NUM_TRANSACCION"]).value = num_transaccion
+        _backup()
+        wb.save(EXCEL_PATH)
+        wb.close()
+        return pedido_id
 
 def get_pedidos_agrupados(desde=None, hasta=None, cliente=None, codigo=None):
-    historial = get_historial_raw()
-    def pasa_filtros(h):
-        if desde and (not h["fecha"] or str(h["fecha"])[:10] < desde): return False
-        if hasta and (not h["fecha"] or str(h["fecha"])[:10] > hasta): return False
-        if cliente and cliente.lower() not in (h["cliente"] or "").lower(): return False
-        if codigo and codigo.lower() not in (h["codigo"] or "").lower(): return False
-        return True
-    historial = [h for h in historial if pasa_filtros(h)]
-    pedidos = {}
-    for h in historial:
-        pid = h["pedido_id"] or f"SIN-ID-{h['fecha']}-{h['cliente']}"
-        if pid not in pedidos:
-            pedidos[pid] = {"pedido_id": pid, "fecha": h["fecha"], "cliente": h["cliente"], "telefono": h["telefono"], "metodo_pago": h["metodo_pago"], "num_transaccion": h["num_transaccion"], "items": [], "total": 0}
-        pedidos[pid]["items"].append(h)
-        pedidos[pid]["total"] += h["subtotal"] or 0
-    resultado = list(pedidos.values())
-    resultado.sort(key=lambda p: p["fecha"] or "", reverse=True)
-    return resultado
+    with _lock:
+        wb = _load()
+        if "HISTORIAL" not in wb.sheetnames:
+            wb.close()
+            return []
+        ws = wb["HISTORIAL"]
+        d_desde = _parse_date(desde)
+        d_hasta = _parse_date(hasta)
+        pedidos={}
+        for r in range(HIST_FIRST_DATA_ROW, ws.max_row+1):
+            pid = ws.cell(r, HIST_COLS["PEDIDO_ID"]).value
+            if not pid: continue
+            cli = ws.cell(r, HIST_COLS["CLIENTE"]).value or ""
+            cod = ws.cell(r, HIST_COLS["CODIGO"]).value or ""
+            fecha_raw = ws.cell(r, HIST_COLS["FECHA"]).value
+            f_date = _parse_date(fecha_raw)
+            if cliente and cliente.lower() not in str(cli).lower(): continue
+            if codigo and codigo.lower() not in str(cod).lower(): continue
+            if d_desde and f_date and f_date < d_desde: continue
+            if d_hasta and f_date and f_date > d_hasta: continue
+            if pid not in pedidos:
+                pedidos[pid] = {
+                    "pedido_id": pid,
+                    "fecha": str(fecha_raw or ""),
+                    "cliente": cli,
+                    "telefono": ws.cell(r, HIST_COLS["TELEFONO"]).value,
+                    "metodo_pago": ws.cell(r, HIST_COLS["METODO_PAGO"]).value,
+                    "num_transaccion": ws.cell(r, HIST_COLS["NUM_TRANSACCION"]).value,
+                    "items":[],
+                    "total":0
+                }
+            sub = ws.cell(r, HIST_COLS["SUBTOTAL"]).value or 0
+            pedidos[pid]["items"].append({
+                "codigo": cod,
+                "prenda": ws.cell(r, HIST_COLS["PRENDA"]).value,
+                "color": ws.cell(r, HIST_COLS["COLOR"]).value,
+                "talla": ws.cell(r, HIST_COLS["TALLA"]).value,
+                "cant": ws.cell(r, HIST_COLS["CANT"]).value,
+                "precio": ws.cell(r, HIST_COLS["PRECIO"]).value,
+                "subtotal": sub
+            })
+            pedidos[pid]["total"] += float(sub or 0)
+        wb.close()
+        return sorted(pedidos.values(), key=lambda x: x["pedido_id"], reverse=True)
 
 def eliminar_pedido(pedido_id):
-        if not pedido_id:
-            raise ValueError("Falta el ID del pedido")
-            with _lock:
-                wb=_load()
-                raise ValueError("No existe la hoja HISTORIAL")
-                ws = wb["HISTORIAL"]
-                filas_a_borrar=[]
+    if not pedido_id:
+        raise ValueError("Falta el ID del pedido")
+    with _lock:
+        wb = _load()
+        if "HISTORIAL" not in wb.sheetnames:
+            wb.close()
+            raise ValueError("No existe la hoja HISTORIAL")
+        ws = wb["HISTORIAL"]
+        filas_a_borrar = []
         for row in range(HIST_FIRST_DATA_ROW, ws.max_row + 1):
-            pid=ws.cell(row=row, column=HIST_COLS["PEDIDO_ID"]).value
-            if pid and str(pid).strip()==str(pedido_id).strip():
-            filas_a_borrar.apppend(row)
+            pid = ws.cell(row=row, column=HIST_COLS["PEDIDO_ID"]).value
+            if pid and str(pid).strip() == str(pedido_id).strip():
+                filas_a_borrar.append(row)
         if not filas_a_borrar:
             wb.close()
-        raise ValueError(f"No se encontro el pedido {pedido_id}")
-        for row in reverse(filas_a_borrar):
+            raise ValueError(f"No se encontró el pedido {pedido_id}")
+        for row in reversed(filas_a_borrar):
             ws.delete_rows(row, 1)
-            _backup()
-            wb.sav(EXCEL_PATH)
-            WB.close()
+        _backup()
+        wb.save(EXCEL_PATH)
+        wb.close()
     return True
